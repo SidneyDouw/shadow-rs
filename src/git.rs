@@ -372,7 +372,13 @@ pub fn branch() -> String {
     }
     #[cfg(feature = "gitoxide")]
     {
-        todo!()
+        match gix::discover(".") {
+            Ok(repo) => match repo.head_name() {
+                Ok(Some(name)) => name.shorten().to_string(),
+                _ => String::new(),
+            },
+            _ => String::new(),
+        }
     }
     #[cfg(all(not(feature = "git2"), not(feature = "gitoxide")))]
     {
