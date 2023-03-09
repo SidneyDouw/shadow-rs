@@ -149,22 +149,18 @@ impl Git {
         let tag = refs
             .tags()
             .map_err(ShadowError::new)?
-            .filter_map(|tag| {
-                let mut tag = tag.ok()?;
-
-                let peeled_tag_id = match tag.inner.peeled {
-                    Some(id) => id,
-                    None => {
-                        tag.peel_to_id_in_place().ok()?;
-                        tag.inner.peeled.expect("peeled")
-                    }
-                };
-
-                if peeled_tag_id != repo.head_id().ok()? {
-                    None
-                } else {
-                    Some(tag)
+            .filter_map(|tag| match tag {
+                Ok(mut tag) => {
+                    let peeled_tag_id = match tag.inner.peeled {
+                        Some(id) => id,
+                        None => {
+                            tag.peel_to_id_in_place().ok()?;
+                            tag.inner.peeled.expect("peeled")
+                        }
+                    };
+                    repo.head_id().ok()?.eq(&peeled_tag_id).then_some(tag)
                 }
+                _ => None,
             })
             .map(|tag| tag.name().shorten().to_string())
             .collect::<Vec<_>>()
@@ -393,7 +389,32 @@ pub fn branch() -> String {
 pub fn tag() -> String {
     #[cfg(feature = "gitoxide")]
     {
-        todo!()
+        match gix::discover(".") {
+            Ok(repo) => match repo.references() {
+                Ok(refs) => match refs.tags() {
+                    Ok(tags_iter) => tags_iter
+                        .filter_map(|tag| match tag {
+                            Ok(mut tag) => {
+                                let peeled_tag_id = match tag.inner.peeled {
+                                    Some(id) => id,
+                                    None => {
+                                        tag.peel_to_id_in_place().ok()?;
+                                        tag.inner.peeled.expect("peeled")
+                                    }
+                                };
+                                repo.head_id().ok()?.eq(&peeled_tag_id).then_some(tag)
+                            }
+                            _ => None,
+                        })
+                        .map(|tag| tag.name().shorten().to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    _ => String::new(),
+                },
+                _ => String::new(),
+            },
+            _ => String::new(),
+        }
     }
     #[cfg(not(feature = "gitoxide"))]
     command_current_tag().unwrap_or_default()
