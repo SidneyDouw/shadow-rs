@@ -586,4 +586,57 @@ mod tests {
 
         assert_eq!(Some(branch()), command_current_branch());
     }
+
+    #[test]
+    fn test_current_tag() {
+        assert_eq!(Some(tag()), command_current_tag());
+    }
+
+    #[cfg(all(feature = "git2", feature = "gitoxide"))]
+    #[test]
+    fn compare_git2_vs_gitoxide_outputs() {
+        let repo_path = Path::new(".");
+
+        // Note: `init_git2` sometimes falls back onto `git` commands so we need to change the
+        // cwd if `repo_path` is not `.`
+        std::env::set_current_dir(repo_path).unwrap();
+
+        let mut git2_map = new_empty_git(CiType::Github);
+        git2_map.init_git2(repo_path).unwrap();
+
+        let mut gitoxide_map = new_empty_git(CiType::Github);
+        gitoxide_map.init_gitoxide(repo_path).unwrap();
+
+        // only BRANCH and TAG will be overwritten by git
+        let mut git_map = new_empty_git(CiType::Github);
+        git_map.init(repo_path, &BTreeMap::new()).unwrap();
+
+        git2_map
+            .map
+            .into_iter()
+            // TODO: remove this filter once gitoxide implements `git status` like functionality
+            .filter(|(key, _)| key.ne(&"GIT_CLEAN") && key.ne(&"GIT_STATUS_FILE"))
+            .for_each(|(key, git2_val)| {
+                let gix_val = gitoxide_map.map.get(key).unwrap();
+                let git_val = git_map.map.get(key).unwrap();
+                println!(
+                    "{}\n  git2 - {:?}\n   gix - {:?}\n   git - {:?}\n",
+                    key, git2_val.v, gix_val.v, git_val.v
+                );
+
+                // NOTES:
+                // skipping assertion on `SHORT_COMMIT` as the current implementation just truncates the commit_id
+                // to 8 characters, while gitoxide computes the shortest possible id while respecting the `core.abbrev` setting
+                //
+                // skipping assertions on `BRANCH` and `TAG` as the git2 values are always overwritten by the git value,
+                // so we compare against that to make sure gix gives the correct output
+                if !["SHORT_COMMIT", "BRANCH", "TAG"].contains(&key) {
+                    assert_eq!(git2_val.v, gix_val.v, "mismatch found in {}", key);
+                }
+
+                if ["BRANCH", "TAG"].contains(&key) {
+                    assert_eq!(git_val.v, gix_val.v, "mismatch found in {}", key);
+                }
+            });
+    }
 }
