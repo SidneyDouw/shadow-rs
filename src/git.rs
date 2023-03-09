@@ -78,62 +78,62 @@ impl Git {
     #[cfg(feature = "git2")]
     #[allow(dead_code)]
     fn init_git2(&mut self, path: &Path) -> SdResult<()> {
-            use crate::git::git2_mod::git_repo;
+        use crate::git::git2_mod::git_repo;
 
-            let repo = git_repo(path).map_err(ShadowError::new)?;
-            let reference = repo.head().map_err(ShadowError::new)?;
+        let repo = git_repo(path).map_err(ShadowError::new)?;
+        let reference = repo.head().map_err(ShadowError::new)?;
 
-            //get branch
-            let branch = reference
-                .shorthand()
-                .map(|x| x.trim().to_string())
-                .or_else(command_current_branch)
-                .unwrap_or_default();
+        //get branch
+        let branch = reference
+            .shorthand()
+            .map(|x| x.trim().to_string())
+            .or_else(command_current_branch)
+            .unwrap_or_default();
 
-            //get HEAD branch
-            let tag = command_current_tag().unwrap_or_default();
+        //get HEAD branch
+        let tag = command_current_tag().unwrap_or_default();
 
-            self.update_str(BRANCH, branch);
-            self.update_str(TAG, tag);
-            if let Some(v) = reference.target() {
-                let commit = v.to_string();
-                self.update_str(COMMIT_HASH, commit.clone());
-                let mut short_commit = commit.as_str();
+        self.update_str(BRANCH, branch);
+        self.update_str(TAG, tag);
+        if let Some(v) = reference.target() {
+            let commit = v.to_string();
+            self.update_str(COMMIT_HASH, commit.clone());
+            let mut short_commit = commit.as_str();
 
-                if commit.len() > 8 {
-                    short_commit = short_commit.get(0..8).unwrap();
-                }
-                self.update_str(SHORT_COMMIT, short_commit.to_string());
+            if commit.len() > 8 {
+                short_commit = short_commit.get(0..8).unwrap();
             }
+            self.update_str(SHORT_COMMIT, short_commit.to_string());
+        }
 
-            let commit = reference.peel_to_commit().map_err(ShadowError::new)?;
+        let commit = reference.peel_to_commit().map_err(ShadowError::new)?;
 
-            let time_stamp = commit.time().seconds().to_string().parse::<i64>()?;
-            let date_time = DateTime::timestamp_2_utc(time_stamp);
-            self.update_str(COMMIT_DATE, date_time.human_format());
+        let time_stamp = commit.time().seconds().to_string().parse::<i64>()?;
+        let date_time = DateTime::timestamp_2_utc(time_stamp);
+        self.update_str(COMMIT_DATE, date_time.human_format());
 
-            self.update_str(COMMIT_DATE_2822, date_time.to_rfc2822());
+        self.update_str(COMMIT_DATE_2822, date_time.to_rfc2822());
 
-            self.update_str(COMMIT_DATE_3339, date_time.to_rfc3339());
+        self.update_str(COMMIT_DATE_3339, date_time.to_rfc3339());
 
-            let author = commit.author();
-            if let Some(v) = author.email() {
-                self.update_str(COMMIT_EMAIL, v.to_string());
-            }
+        let author = commit.author();
+        if let Some(v) = author.email() {
+            self.update_str(COMMIT_EMAIL, v.to_string());
+        }
 
-            if let Some(v) = author.name() {
-                self.update_str(COMMIT_AUTHOR, v.to_string());
-            }
-            let status_file = Self::git2_dirty_stage(&repo);
-            if status_file.trim().is_empty() {
-                self.update_bool(GIT_CLEAN, true);
-            } else {
-                self.update_bool(GIT_CLEAN, false);
-            }
-            self.update_str(GIT_STATUS_FILE, status_file);
+        if let Some(v) = author.name() {
+            self.update_str(COMMIT_AUTHOR, v.to_string());
+        }
+        let status_file = Self::git2_dirty_stage(&repo);
+        if status_file.trim().is_empty() {
+            self.update_bool(GIT_CLEAN, true);
+        } else {
+            self.update_bool(GIT_CLEAN, false);
+        }
+        self.update_str(GIT_STATUS_FILE, status_file);
 
         Ok(())
-        }
+    }
 
     #[cfg(feature = "gitoxide")]
     fn init_gitoxide(&mut self, path: &Path) -> SdResult<()> {
