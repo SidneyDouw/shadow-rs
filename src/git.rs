@@ -279,6 +279,16 @@ pub fn new_git(
     ci: CiType,
     std_env: &BTreeMap<String, String>,
 ) -> BTreeMap<ShadowConst, ConstVal> {
+    let mut git = new_empty_git(ci);
+
+    if let Err(e) = git.init(path, std_env) {
+        println!("{e}");
+    }
+
+    git.map
+}
+
+fn new_empty_git(ci: CiType) -> Git {
     let mut git = Git {
         map: Default::default(),
         ci_type: ci,
@@ -325,11 +335,7 @@ pub fn new_git(
         ConstVal::new("display current git repository status files:'dirty or stage'"),
     );
 
-    if let Err(e) = git.init(path, std_env) {
-        println!("{e}");
-    }
-
-    git.map
+    git
 }
 
 #[cfg(feature = "git2")]
