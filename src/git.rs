@@ -55,7 +55,10 @@ impl Git {
         let x = command_git_status_file();
         self.update_str(GIT_STATUS_FILE, x);
 
+        #[cfg(all(feature = "git2", not(feature = "gitoxide")))]
         self.init_git2(path)?;
+        #[cfg(feature = "gitoxide")]
+        self.init_gitoxide(path)?;
 
         // use command branch
         if let Some(x) = command_current_branch() {
@@ -72,9 +75,9 @@ impl Git {
         Ok(())
     }
 
+    #[cfg(feature = "git2")]
+    #[allow(dead_code)]
     fn init_git2(&mut self, path: &Path) -> SdResult<()> {
-        #[cfg(feature = "git2")]
-        {
             use crate::git::git2_mod::git_repo;
 
             let repo = git_repo(path).map_err(ShadowError::new)?;
@@ -128,7 +131,74 @@ impl Git {
                 self.update_bool(GIT_CLEAN, false);
             }
             self.update_str(GIT_STATUS_FILE, status_file);
+
+        Ok(())
         }
+
+    #[cfg(feature = "gitoxide")]
+    fn init_gitoxide(&mut self, path: &Path) -> SdResult<()> {
+        let repo = gix::discover(path).map_err(ShadowError::new)?;
+
+        let branch = repo
+            .head_name()
+            .map_err(ShadowError::new)?
+            .map(|n| n.shorten().to_string())
+            .unwrap_or("HEAD".to_string());
+
+        let refs = repo.references().map_err(ShadowError::new)?;
+        let tag = refs
+            .tags()
+            .map_err(ShadowError::new)?
+            .filter_map(|tag| {
+                let mut tag = tag.ok()?;
+
+                let peeled_tag_id = match tag.inner.peeled {
+                    Some(id) => id,
+                    None => {
+                        tag.peel_to_id_in_place().ok()?;
+                        tag.inner.peeled.expect("peeled")
+                    }
+                };
+
+                if peeled_tag_id != repo.head_id().ok()? {
+                    None
+                } else {
+                    Some(tag)
+                }
+            })
+            .map(|tag| tag.name().shorten().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        self.update_str(BRANCH, branch);
+        self.update_str(TAG, tag);
+
+        let commit = repo.head_commit().map_err(ShadowError::new)?;
+
+        self.update_str(COMMIT_HASH, commit.id().to_string());
+        self.update_str(
+            SHORT_COMMIT,
+            commit
+                .id()
+                .shorten()
+                .map(|p| p.to_string())
+                .unwrap_or_default(),
+        );
+
+        if let Ok(time) = commit.time() {
+            let date_time = DateTime::timestamp_2_utc(time.seconds().into());
+
+            self.update_str(COMMIT_DATE, date_time.human_format());
+            self.update_str(COMMIT_DATE_2822, date_time.to_rfc2822());
+            self.update_str(COMMIT_DATE_3339, date_time.to_rfc3339());
+        }
+
+        if let Ok(author) = commit.author() {
+            let (name, email) = author.actor();
+            self.update_str(COMMIT_AUTHOR, name.to_string());
+            self.update_str(COMMIT_EMAIL, email.to_string());
+        }
+
         Ok(())
     }
 
@@ -286,7 +356,7 @@ pub mod git2_mod {
 /// It's use default feature.This function try use [git2] crates get current branch.
 /// If not use git2 feature,then try use [Command] to get.
 pub fn branch() -> String {
-    #[cfg(feature = "git2")]
+    #[cfg(all(feature = "git2", not(feature = "gitoxide")))]
     {
         use crate::git::git2_mod::{git2_current_branch, git_repo};
         git_repo(".")
@@ -294,7 +364,11 @@ pub fn branch() -> String {
             .unwrap_or_else(|_| command_current_branch())
             .unwrap_or_default()
     }
-    #[cfg(not(feature = "git2"))]
+    #[cfg(feature = "gitoxide")]
+    {
+        todo!()
+    }
+    #[cfg(all(not(feature = "git2"), not(feature = "gitoxide")))]
     {
         command_current_branch().unwrap_or_default()
     }
@@ -305,6 +379,11 @@ pub fn branch() -> String {
 /// When current repository exists git folder.
 /// I's use [Command] to get.
 pub fn tag() -> String {
+    #[cfg(feature = "gitoxide")]
+    {
+        todo!()
+    }
+    #[cfg(not(feature = "gitoxide"))]
     command_current_tag().unwrap_or_default()
 }
 
@@ -312,7 +391,7 @@ pub fn tag() -> String {
 ///
 /// if nothing,It means clean:true. On the contrary, it is 'dirty':false
 pub fn git_clean() -> bool {
-    #[cfg(feature = "git2")]
+    #[cfg(all(feature = "git2", not(feature = "gitoxide")))]
     {
         use crate::git::git2_mod::git_repo;
         git_repo(".")
@@ -320,7 +399,11 @@ pub fn git_clean() -> bool {
             .map(|x| x.trim().is_empty())
             .unwrap_or(true)
     }
-    #[cfg(not(feature = "git2"))]
+    #[cfg(feature = "gitoxide")]
+    {
+        todo!()
+    }
+    #[cfg(all(not(feature = "git2"), not(feature = "gitoxide")))]
     {
         command_git_clean()
     }
@@ -332,14 +415,18 @@ pub fn git_clean() -> bool {
 ///
 /// Example output:`   * examples/builtin_fn.rs (dirty)`
 pub fn git_status_file() -> String {
-    #[cfg(feature = "git2")]
+    #[cfg(all(feature = "git2", not(feature = "gitoxide")))]
     {
         use crate::git::git2_mod::git_repo;
         git_repo(".")
             .map(|x| Git::git2_dirty_stage(&x))
             .unwrap_or_default()
     }
-    #[cfg(not(feature = "git2"))]
+    #[cfg(feature = "gitoxide")]
+    {
+        todo!()
+    }
+    #[cfg(all(not(feature = "git2"), not(feature = "gitoxide")))]
     {
         command_git_status_file()
     }
@@ -473,7 +560,7 @@ mod tests {
         if get_std_env().get("GITHUB_REF").is_some() {
             return;
         }
-        #[cfg(feature = "git2")]
+        #[cfg(all(feature = "git2", not(feature = "gitoxide")))]
         {
             use crate::git::git2_mod::{git2_current_branch, git_repo};
             let git2_branch = git_repo(".")
