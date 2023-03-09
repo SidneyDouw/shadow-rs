@@ -143,7 +143,7 @@ impl Git {
             .head_name()
             .map_err(ShadowError::new)?
             .map(|n| n.shorten().to_string())
-            .unwrap_or("HEAD".to_string());
+            .unwrap_or_default();
 
         let refs = repo.references().map_err(ShadowError::new)?;
         let tag = refs
