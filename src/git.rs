@@ -403,7 +403,7 @@ pub fn tag() -> String {
 ///
 /// if nothing,It means clean:true. On the contrary, it is 'dirty':false
 pub fn git_clean() -> bool {
-    #[cfg(all(feature = "git2", not(feature = "gitoxide")))]
+    #[cfg(feature = "git2")]
     {
         use crate::git::git2_mod::git_repo;
         git_repo(".")
@@ -411,11 +411,7 @@ pub fn git_clean() -> bool {
             .map(|x| x.trim().is_empty())
             .unwrap_or(true)
     }
-    #[cfg(feature = "gitoxide")]
-    {
-        todo!()
-    }
-    #[cfg(all(not(feature = "git2"), not(feature = "gitoxide")))]
+    #[cfg(not(feature = "git2"))]
     {
         command_git_clean()
     }
@@ -427,18 +423,14 @@ pub fn git_clean() -> bool {
 ///
 /// Example output:`   * examples/builtin_fn.rs (dirty)`
 pub fn git_status_file() -> String {
-    #[cfg(all(feature = "git2", not(feature = "gitoxide")))]
+    #[cfg(feature = "git2")]
     {
         use crate::git::git2_mod::git_repo;
         git_repo(".")
             .map(|x| Git::git2_dirty_stage(&x))
             .unwrap_or_default()
     }
-    #[cfg(feature = "gitoxide")]
-    {
-        todo!()
-    }
-    #[cfg(all(not(feature = "git2"), not(feature = "gitoxide")))]
+    #[cfg(not(feature = "git2"))]
     {
         command_git_status_file()
     }
