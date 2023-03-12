@@ -56,7 +56,10 @@ impl Git {
         let x = command_git_status_file();
         self.update_str(GIT_STATUS_FILE, x);
 
+        #[cfg(all(feature = "git2", not(feature = "gitoxide")))]
         self.init_git2(path)?;
+        #[cfg(feature = "gitoxide")]
+        self.init_gitoxide(path)?;
 
         // use command branch
         if let Some(x) = command_current_branch() {
@@ -78,65 +81,144 @@ impl Git {
         Ok(())
     }
 
+    #[cfg(feature = "git2")]
+    #[allow(dead_code)]
     fn init_git2(&mut self, path: &Path) -> SdResult<()> {
-        #[cfg(feature = "git2")]
-        {
-            use crate::git::git2_mod::git_repo;
+        use crate::git::git2_mod::git_repo;
 
-            let repo = git_repo(path).map_err(ShadowError::new)?;
-            let reference = repo.head().map_err(ShadowError::new)?;
+        let repo = git_repo(path).map_err(ShadowError::new)?;
+        let reference = repo.head().map_err(ShadowError::new)?;
 
-            //get branch
-            let branch = reference
-                .shorthand()
-                .map(|x| x.trim().to_string())
-                .or_else(command_current_branch)
-                .unwrap_or_default();
+        //get branch
+        let branch = reference
+            .shorthand()
+            .map(|x| x.trim().to_string())
+            .or_else(command_current_branch)
+            .unwrap_or_default();
 
-            //get HEAD branch
-            let tag = command_current_tag().unwrap_or_default();
-            let last_tag = command_last_tag().unwrap_or_default();
-            self.update_str(BRANCH, branch);
-            self.update_str(TAG, tag);
-            self.update_str(LAST_TAG, last_tag);
+        //get HEAD branch
+        let tag = command_current_tag().unwrap_or_default();
+        let last_tag = command_last_tag().unwrap_or_default();
+        self.update_str(BRANCH, branch);
+        self.update_str(TAG, tag);
+        self.update_str(LAST_TAG, last_tag);
+        if let Some(v) = reference.target() {
+            let commit = v.to_string();
+            self.update_str(COMMIT_HASH, commit.clone());
+            let mut short_commit = commit.as_str();
 
-            if let Some(v) = reference.target() {
-                let commit = v.to_string();
-                self.update_str(COMMIT_HASH, commit.clone());
-                let mut short_commit = commit.as_str();
-
-                if commit.len() > 8 {
-                    short_commit = short_commit.get(0..8).unwrap();
-                }
-                self.update_str(SHORT_COMMIT, short_commit.to_string());
+            if commit.len() > 8 {
+                short_commit = short_commit.get(0..8).unwrap();
             }
-
-            let commit = reference.peel_to_commit().map_err(ShadowError::new)?;
-
-            let time_stamp = commit.time().seconds().to_string().parse::<i64>()?;
-            let date_time = DateTime::timestamp_2_utc(time_stamp);
-            self.update_str(COMMIT_DATE, date_time.human_format());
-
-            self.update_str(COMMIT_DATE_2822, date_time.to_rfc2822());
-
-            self.update_str(COMMIT_DATE_3339, date_time.to_rfc3339());
-
-            let author = commit.author();
-            if let Some(v) = author.email() {
-                self.update_str(COMMIT_EMAIL, v.to_string());
-            }
-
-            if let Some(v) = author.name() {
-                self.update_str(COMMIT_AUTHOR, v.to_string());
-            }
-            let status_file = Self::git2_dirty_stage(&repo);
-            if status_file.trim().is_empty() {
-                self.update_bool(GIT_CLEAN, true);
-            } else {
-                self.update_bool(GIT_CLEAN, false);
-            }
-            self.update_str(GIT_STATUS_FILE, status_file);
+            self.update_str(SHORT_COMMIT, short_commit.to_string());
         }
+
+        let commit = reference.peel_to_commit().map_err(ShadowError::new)?;
+
+        let time_stamp = commit.time().seconds().to_string().parse::<i64>()?;
+        let date_time = DateTime::timestamp_2_utc(time_stamp);
+        self.update_str(COMMIT_DATE, date_time.human_format());
+
+        self.update_str(COMMIT_DATE_2822, date_time.to_rfc2822());
+
+        self.update_str(COMMIT_DATE_3339, date_time.to_rfc3339());
+
+        let author = commit.author();
+        if let Some(v) = author.email() {
+            self.update_str(COMMIT_EMAIL, v.to_string());
+        }
+
+        if let Some(v) = author.name() {
+            self.update_str(COMMIT_AUTHOR, v.to_string());
+        }
+        let status_file = Self::git2_dirty_stage(&repo);
+        if status_file.trim().is_empty() {
+            self.update_bool(GIT_CLEAN, true);
+        } else {
+            self.update_bool(GIT_CLEAN, false);
+        }
+        self.update_str(GIT_STATUS_FILE, status_file);
+
+        Ok(())
+    }
+
+    #[cfg(feature = "gitoxide")]
+    fn init_gitoxide(&mut self, path: &Path) -> SdResult<()> {
+        let repo = gix::discover(path).map_err(ShadowError::new)?;
+
+        let branch = repo
+            .head_name()
+            .map_err(ShadowError::new)?
+            .map(|n| n.shorten().to_string())
+            .unwrap_or_default();
+
+        // TODO: how does the --contains option actually work?
+        let refs = repo.references().map_err(ShadowError::new)?;
+        let tag = refs
+            .tags()
+            .map_err(ShadowError::new)?
+            .filter_map(|tag| match tag {
+                Ok(mut tag) => {
+                    let peeled_tag_id = match tag.inner.peeled {
+                        Some(id) => id,
+                        None => {
+                            tag.peel_to_id_in_place().ok()?;
+                            tag.inner.peeled.expect("peeled")
+                        }
+                    };
+                    repo.head_id().ok()?.eq(&peeled_tag_id).then_some(tag)
+                }
+                _ => None,
+            })
+            .map(|tag| tag.name().shorten().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let last_tag = repo
+            .head_commit()
+            .map_err(ShadowError::new)?
+            .describe()
+            .names(gix::commit::describe::SelectRef::AllTags)
+            .format()
+            .map_err(ShadowError::new)?;
+
+        // TODO: add .hex_len(0) option (git: --abbrev=0) in `Format`s `Display` implementation
+        let last_tag = if let Some(name) = last_tag.name.as_deref() {
+            name.to_string()
+        } else {
+            String::new()
+        };
+
+        self.update_str(BRANCH, branch);
+        self.update_str(TAG, tag);
+        self.update_str(LAST_TAG, last_tag);
+
+        let commit = repo.head_commit().map_err(ShadowError::new)?;
+
+        self.update_str(COMMIT_HASH, commit.id().to_string());
+        self.update_str(
+            SHORT_COMMIT,
+            commit
+                .id()
+                .shorten()
+                .map(|p| p.to_string())
+                .unwrap_or_default(),
+        );
+
+        if let Ok(time) = commit.time() {
+            let date_time = DateTime::timestamp_2_utc(time.seconds().into());
+
+            self.update_str(COMMIT_DATE, date_time.human_format());
+            self.update_str(COMMIT_DATE_2822, date_time.to_rfc2822());
+            self.update_str(COMMIT_DATE_3339, date_time.to_rfc3339());
+        }
+
+        if let Ok(author) = commit.author() {
+            let (name, email) = author.actor();
+            self.update_str(COMMIT_AUTHOR, name.to_string());
+            self.update_str(COMMIT_EMAIL, email.to_string());
+        }
+
         Ok(())
     }
 
@@ -218,6 +300,16 @@ pub fn new_git(
     ci: CiType,
     std_env: &BTreeMap<String, String>,
 ) -> BTreeMap<ShadowConst, ConstVal> {
+    let mut git = new_empty_git(ci);
+
+    if let Err(e) = git.init(path, std_env) {
+        println!("{e}");
+    }
+
+    git.map
+}
+
+fn new_empty_git(ci: CiType) -> Git {
     let mut git = Git {
         map: Default::default(),
         ci_type: ci,
@@ -266,11 +358,7 @@ pub fn new_git(
         ConstVal::new("display current git repository status files:'dirty or stage'"),
     );
 
-    if let Err(e) = git.init(path, std_env) {
-        println!("{e}");
-    }
-
-    git.map
+    git
 }
 
 #[cfg(feature = "git2")]
@@ -297,7 +385,7 @@ pub mod git2_mod {
 /// It's use default feature.This function try use [git2] crates get current branch.
 /// If not use git2 feature,then try use [Command] to get.
 pub fn branch() -> String {
-    #[cfg(feature = "git2")]
+    #[cfg(all(feature = "git2", not(feature = "gitoxide")))]
     {
         use crate::git::git2_mod::{git2_current_branch, git_repo};
         git_repo(".")
@@ -305,7 +393,17 @@ pub fn branch() -> String {
             .unwrap_or_else(|_| command_current_branch())
             .unwrap_or_default()
     }
-    #[cfg(not(feature = "git2"))]
+    #[cfg(feature = "gitoxide")]
+    {
+        match gix::discover(".") {
+            Ok(repo) => match repo.head_name() {
+                Ok(Some(name)) => name.shorten().to_string(),
+                _ => String::new(),
+            },
+            _ => String::new(),
+        }
+    }
+    #[cfg(all(not(feature = "git2"), not(feature = "gitoxide")))]
     {
         command_current_branch().unwrap_or_default()
     }
@@ -316,6 +414,36 @@ pub fn branch() -> String {
 /// When current repository exists git folder.
 /// I's use [Command] to get.
 pub fn tag() -> String {
+    #[cfg(feature = "gitoxide")]
+    {
+        match gix::discover(".") {
+            Ok(repo) => match repo.references() {
+                Ok(refs) => match refs.tags() {
+                    Ok(tags_iter) => tags_iter
+                        .filter_map(|tag| match tag {
+                            Ok(mut tag) => {
+                                let peeled_tag_id = match tag.inner.peeled {
+                                    Some(id) => id,
+                                    None => {
+                                        tag.peel_to_id_in_place().ok()?;
+                                        tag.inner.peeled.expect("peeled")
+                                    }
+                                };
+                                repo.head_id().ok()?.eq(&peeled_tag_id).then_some(tag)
+                            }
+                            _ => None,
+                        })
+                        .map(|tag| tag.name().shorten().to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    _ => String::new(),
+                },
+                _ => String::new(),
+            },
+            _ => String::new(),
+        }
+    }
+    #[cfg(not(feature = "gitoxide"))]
     command_current_tag().unwrap_or_default()
 }
 
@@ -496,7 +624,7 @@ mod tests {
         if get_std_env().get("GITHUB_REF").is_some() {
             return;
         }
-        #[cfg(feature = "git2")]
+        #[cfg(all(feature = "git2", not(feature = "gitoxide")))]
         {
             use crate::git::git2_mod::{git2_current_branch, git_repo};
             let git2_branch = git_repo(".")
@@ -515,5 +643,59 @@ mod tests {
     fn test_command_last_tag() {
         let opt_last_tag = command_last_tag();
         assert!(opt_last_tag.is_some())
+    }
+
+    #[test]
+    fn test_current_tag() {
+        assert_eq!(Some(tag()), command_current_tag());
+    }
+
+    #[cfg(all(feature = "git2", feature = "gitoxide"))]
+    #[test]
+    fn compare_git2_vs_gitoxide_outputs() {
+        let repo_path = Path::new(".");
+
+        // Note: `init_git2` sometimes falls back onto `git` commands so we need to change the
+        // cwd if `repo_path` is not `.`
+        std::env::set_current_dir(repo_path).unwrap();
+
+        let mut git2_map = new_empty_git(CiType::Github);
+        git2_map.init_git2(repo_path).unwrap();
+
+        let mut gitoxide_map = new_empty_git(CiType::Github);
+        gitoxide_map.init_gitoxide(repo_path).unwrap();
+
+        // only BRANCH and TAG will be overwritten by git
+        let mut git_map = new_empty_git(CiType::Github);
+        git_map.init(repo_path, &BTreeMap::new()).unwrap();
+
+        git2_map
+            .map
+            .into_iter()
+            // TODO: remove this filter once gitoxide implements `git status` like functionality and overrides
+            // the value that are currently being set via git by default
+            .filter(|(key, _)| key.ne(&"GIT_CLEAN") && key.ne(&"GIT_STATUS_FILE"))
+            .for_each(|(key, git2_val)| {
+                let gix_val = gitoxide_map.map.get(key).unwrap();
+                let git_val = git_map.map.get(key).unwrap();
+                println!(
+                    "{}\n  git2 - {:?}\n   gix - {:?}\n   git - {:?}\n",
+                    key, git2_val.v, gix_val.v, git_val.v
+                );
+
+                // NOTES:
+                // skipping assertion on `SHORT_COMMIT` as the current implementation just truncates the commit_id
+                // to 8 characters, while gitoxide computes the shortest possible id while respecting the `core.abbrev` setting
+                //
+                // skipping assertions on `BRANCH`, `TAG` and `LAST_TAG` as the git2 values are always overwritten by the git value,
+                // so we compare against that to make sure gix gives the correct output
+                if !["SHORT_COMMIT", "BRANCH", "TAG", "LAST_TAG"].contains(&key) {
+                    assert_eq!(git2_val.v, gix_val.v, "mismatch found in {}", key);
+                }
+
+                if ["BRANCH", "TAG", "LAST_TAG"].contains(&key) {
+                    assert_eq!(git_val.v, gix_val.v, "mismatch found in {}", key);
+                }
+            });
     }
 }
