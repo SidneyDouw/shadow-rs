@@ -173,8 +173,24 @@ impl Git {
             .collect::<Vec<_>>()
             .join("\n");
 
+        let last_tag = repo
+            .head_commit()
+            .map_err(ShadowError::new)?
+            .describe()
+            .names(gix::commit::describe::SelectRef::AllTags)
+            .format()
+            .map_err(ShadowError::new)?;
+
+        // TODO: add .hex_len(0) option (git: --abbrev=0) in `Format`s `Display` implementation
+        let last_tag = if let Some(name) = last_tag.name.as_deref() {
+            name.to_string()
+        } else {
+            String::new()
+        };
+
         self.update_str(BRANCH, branch);
         self.update_str(TAG, tag);
+        self.update_str(LAST_TAG, last_tag);
 
         let commit = repo.head_commit().map_err(ShadowError::new)?;
 
@@ -669,13 +685,13 @@ mod tests {
                 // skipping assertion on `SHORT_COMMIT` as the current implementation just truncates the commit_id
                 // to 8 characters, while gitoxide computes the shortest possible id while respecting the `core.abbrev` setting
                 //
-                // skipping assertions on `BRANCH` and `TAG` as the git2 values are always overwritten by the git value,
+                // skipping assertions on `BRANCH`, `TAG` and `LAST_TAG` as the git2 values are always overwritten by the git value,
                 // so we compare against that to make sure gix gives the correct output
-                if !["SHORT_COMMIT", "BRANCH", "TAG"].contains(&key) {
+                if !["SHORT_COMMIT", "BRANCH", "TAG", "LAST_TAG"].contains(&key) {
                     assert_eq!(git2_val.v, gix_val.v, "mismatch found in {}", key);
                 }
 
-                if ["BRANCH", "TAG"].contains(&key) {
+                if ["BRANCH", "TAG", "LAST_TAG"].contains(&key) {
                     assert_eq!(git_val.v, gix_val.v, "mismatch found in {}", key);
                 }
             });
