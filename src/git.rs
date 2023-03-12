@@ -152,6 +152,7 @@ impl Git {
             .map(|n| n.shorten().to_string())
             .unwrap_or_default();
 
+        // TODO: how does the --contains option actually work?
         let refs = repo.references().map_err(ShadowError::new)?;
         let tag = refs
             .tags()
@@ -671,7 +672,8 @@ mod tests {
         git2_map
             .map
             .into_iter()
-            // TODO: remove this filter once gitoxide implements `git status` like functionality
+            // TODO: remove this filter once gitoxide implements `git status` like functionality and overrides
+            // the value that are currently being set via git by default
             .filter(|(key, _)| key.ne(&"GIT_CLEAN") && key.ne(&"GIT_STATUS_FILE"))
             .for_each(|(key, git2_val)| {
                 let gix_val = gitoxide_map.map.get(key).unwrap();
